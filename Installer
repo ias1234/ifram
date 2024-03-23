@@ -3,3 +3,7 @@ tgcrypto
 yt-dlp
 requests
 opencv-python
+pyrogram
+Crypto.Cipher
+subprocess
+httpx
