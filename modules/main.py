@@ -7,10 +7,10 @@ from pyrogram.types import Message
 
 from download import BunnyVideoDRM
 
-BOT_TOKEN = ""
+BOT_TOKEN = "7121473749:AAFlpPQUegkVFmCVJfTcIrlI5U7Lq6-B7_U"
 
-app = Client("bot", api_id=6,
-             api_hash="eb06d4abfb49dc3eeb1aeb98ae0f581e", bot_token=BOT_TOKEN)
+app = Client("bot", api_id=15052451,
+             api_hash="dbf8fdfc66d7a1a9bf359c036409aa14", bot_token=BOT_TOKEN)
 
 
 @app.on_message(filters.command("start"))
