@@ -1,10 +1,13 @@
-FROM ubuntu:latest
-RUN apt-get update -y && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends gcc libffi-dev musl-dev ffmpeg aria2 python3-pip \
-    && apt-get clean \
+FROM python:slim-bullseye
+
+WORKDIR /app
+
+COPY . .
+
+RUN apt-get update && apt-get install -y build-essential libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6 \
+    && pip install --upgrade pip \
+    && pip install -r requirements.txt \
+    && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY . /app/
-WORKDIR /app/
-RUN pip3 install --no-cache-dir --upgrade --requirement Installer
-CMD python3 modules/main.py
+CMD ["python", "main.py"]
