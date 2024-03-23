@@ -1,10 +1,11 @@
 import os
+import shutil
+import uuid
+import cv2
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import httpx
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
-import subprocess
+
+from download import BunnyVideoDRM
 
 BOT_TOKEN = "7121473749:AAFlpPQUegkVFmCVJfTcIrlI5U7Lq6-B7_U"
 
@@ -14,147 +15,73 @@ app = Client("bot", api_id=15052451,
 
 @app.on_message(filters.command("start"))
 async def __start(_, m: Message):
-    await m.reply_text("Hi, send me link to download it!", quote=True)
+    await m.reply_text("Hi, send me a bunnyvideo link to download it!", quote=True)
 
-client = httpx.Client(http2=True)
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Dnt': '1',
-    'Sec-Gpc': '1',
-    'Te': 'trailers'
-}
-client.headers = headers
+def get_video_info(file_path):
+    cap = cv2.VideoCapture(file_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    duration = frame_count // fps
 
-playerHeaders = {
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    #'Referer': '', #fill this
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'cross-site',
-    'Sec-Fetch-User': '?1'
-}
+    # Calculate middle frame index
+    middle_frame_index = frame_count // 2
 
-print('#####iframe.mediadelivery.net video downloader#####')
-URI = input('Enter URI in the following form [/embed/{video_library_id}/{video_id}]\n: ')
-title = input('Enter a title (without extension)\n: ')
+    # Set frame position to the middle frame
+    cap.set(cv2.CAP_PROP_POS_FRAMES, middle_frame_index)
 
-###to get player HTML.
-player = client.get(URI, headers=playerHeaders).text
-###
-print('Wait a second. Getting ts files list...')
-######################################################################################################
-client.headers['Accept'] = '*/*'
-client.headers['Sec-Fetch-Dest'] = 'empty'
-client.headers['Sec-Fetch-Mode'] = 'cors'
+    # Read the middle frame
+    ret, frame = cap.read()
+    ss_path = f"./downloads/{uuid.uuid4().hex}.jpg"
 
-pingHeaders = {
-    'Origin': 'https://iframe.mediadelivery.net',
-    'Referer': 'https://iframe.mediadelivery.net/',
-    'Sec-Fetch-Site': 'same-site'
-}
+    cap.release()
 
-mid_idx = player.find('/.drm')
-start_idx = player.rfind('"', 0, mid_idx) + 1
-end_idx = player.find('/ping', mid_idx)
-mediadelivery = player[start_idx:end_idx]
+    if ret:
+        # Save the middle frame as an image
+        cv2.imwrite(ss_path, frame)
+        print("Middle frame captured successfully!")
+    else:
+        print("Failed to capture middle frame.")
 
-#Hash value doesn't matter
-ping = mediadelivery + '/ping?hash=13892ac0903f805449a8dcbe781f896e&time=300&paused=false&resolution=720'
+    ss_path = None if not ret else ss_path
 
-###ping and activate is needed to download full video
-client.get(ping, headers=pingHeaders)
-###
+    return width, height, int(duration), ss_path
 
-activate = mediadelivery + '/activate'
 
-###
-client.get(activate, headers=pingHeaders)
-###
-######################################################################################################
-playlistHeaders = {
-    'Referer': URI,
-    'Sec-Fetch-Site': 'same-origin'
-}
+@app.on_message(filters.text)
+async def __download(_, m: Message):
+    try:
+        msg = await m.reply_text("Downloading...", quote=True)
 
-mid_idx = player.find('playlist.drm')
-start_idx = player.rfind('"', 0, mid_idx) + 1
-end_idx = player.find('"', mid_idx)
-playlistURI = player[start_idx:end_idx]
+        url = m.text.split("\n\n")[0]
+        caption = m.text.split("\n\n")[1]
 
-###
-playlist = client.get(playlistURI, headers=playlistHeaders).text
-###
+        v_name = uuid.uuid4().hex
+        # v_name = "d253eff8dc2446e6b25e9e620bc3f973"
 
-resolution = playlist.split('\n')[-1]
-tsListURI = playlistURI[:playlistURI.find('playlist')] + (resolution if resolution != '' else playlist.split('\n')[-2])
+        video = BunnyVideoDRM(
+            referer='https://iframe.mediadelivery.net/',
+            embed_url=url,
+            name=v_name,
+            path="./downloads/"
+        )
+        video.download()
 
-###
-tsList = client.get(tsListURI, headers=playlistHeaders).text #video.drm
-###
-######################################################################################################
-client.headers['Origin'] = 'https://iframe.mediadelivery.net'
-client.headers['Referer'] = 'https://iframe.mediadelivery.net/'
-sameSiteHeader = {
-    'Sec-Fetch-Site': 'same-site'
-}
-crossSiteHeader = {
-    'Sec-Fetch-Site': 'cross-site'
-}
+        v_path = f"./downloads/{v_name}.mp4"
+        shutil.rmtree(f"./downloads/.{v_name}.mp4", ignore_errors=True)
 
-print('Done\nDownloading ts file...', end='')
+        width, height, duration, ss_path = get_video_info(v_path)
 
-tsCNT = 0
-pingCNT = 0
-start_idx = tsList.rfind('video') + 5
-end_idx = tsList.find('.', start_idx)
-totalTs = int(tsList[start_idx:end_idx]) #Total number of ts files. (last ts file number)
+        await msg.edit_text("Uploading...")
+        await m.reply_video(v_path, quote=True, width=width, height=height, duration=duration, thumb=ss_path, caption=caption)
 
-tsFile = f'./{title}.ts'
-with open(tsFile, 'wb') as file:
-    for uri in tsList.split('\n'):
-        if uri[:10] == '#EXT-X-KEY':
-            start_idx = uri.find('URI="') + 5
-            end_idx = uri.find('"', start_idx)
-            keyURI = uri[start_idx:end_idx]
+        await msg.delete()
 
-            ###to get a key
-            key = client.get(keyURI, headers=sameSiteHeader).content
-            ###
+        os.remove(v_path)
+        os.remove(ss_path)
+    except Exception as e:
+        await m.reply_text(f"Error: {e}", quote=True)
 
-            start_idx = uri.find('IV=0x') + 5
-            iv = bytes.fromhex(uri[start_idx:])
-
-        elif uri[:5] == 'https':
-            ###to get a encrypted ts file
-            encryptedTs = client.get(uri, headers=crossSiteHeader).content
-            ###
-
-            cipher = AES.new(key, AES.MODE_CBC, iv)
-            decryptedTs = unpad(cipher.decrypt(encryptedTs), AES.block_size)
-
-            file.write(decryptedTs)
-
-            #Show progress
-            print('\rDownloading ts file... ' + str(round(tsCNT / totalTs * 100, 2)) + '%  ', end='')
-            tsCNT += 1
-            pingCNT += 1
-        
-        if pingCNT == 10:
-            ###Ping is required periodically
-            client.get(ping, headers=sameSiteHeader)
-            ###
-            pingCNT = 0
-
-######################################################################################################
-#convert ts to mp4 and remove ts file.
-print('\nAlmost done!\nConverting ts to mp4...')
-mp4File = f'./{title}.mp4'
-command = ['ffmpeg', '-i', tsFile, '-c', 'copy', '-bsf:a', 'aac_adtstoasc', mp4File]
-subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-command = ['rm', tsFile]
-subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-print('Complete!')
+print("Bot started!")
+app.run()
