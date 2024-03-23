@@ -1,174 +1,147 @@
-#!/usr/bin/env python3
+import httpx
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+import subprocess
 
-import re
-import sys
-from hashlib import md5
-from html import unescape
-from random import random
-from urllib.parse import urlparse
+client = httpx.Client(http2=True)
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Dnt': '1',
+    'Sec-Gpc': '1',
+    'Te': 'trailers'
+}
+client.headers = headers
 
-import requests
-import yt_dlp
+playerHeaders = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    #'Referer': '', #fill this
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'cross-site',
+    'Sec-Fetch-User': '?1'
+}
 
+print('#####iframe.mediadelivery.net video downloader#####')
+URI = input('Enter URI in the following form [/embed/{video_library_id}/{video_id}]\n: ')
+title = input('Enter a title (without extension)\n: ')
 
-class BunnyVideoDRM:
-    # user agent and platform related headers
-    user_agent = {
-        'sec-ch-ua':
-            '"Google Chrome";v="107", "Chromium";v="107", "Not=A?Brand";v="24"',
-        'sec-ch-ua-mobile':
-            '?0',
-        'sec-ch-ua-platform':
-            '"Linux"',
-        'user-agent':
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'
-    }
-    session = requests.session()
-    session.headers.update(user_agent)
+###to get player HTML.
+player = client.get(URI, headers=playerHeaders).text
+###
+print('Wait a second. Getting ts files list...')
+######################################################################################################
+client.headers['Accept'] = '*/*'
+client.headers['Sec-Fetch-Dest'] = 'empty'
+client.headers['Sec-Fetch-Mode'] = 'cors'
 
-    def __init__(self,
-                 referer='https://127.0.0.1/',
-                 embed_url='',
-                 name='',
-                 path=''):
-        self.referer = referer if referer else sys.exit(1)
-        self.embed_url = embed_url if embed_url else sys.exit(1)
-        self.guid = urlparse(embed_url).path.split('/')[-1]
-        self.headers = {
-            'embed': {
-                'authority': 'iframe.mediadelivery.net',
-                'accept': '*/*',
-                'accept-language': 'en-US,en;q=0.9',
-                'cache-control': 'no-cache',
-                'pragma': 'no-cache',
-                'referer': referer,
-                'sec-fetch-dest': 'iframe',
-                'sec-fetch-mode': 'navigate',
-                'sec-fetch-site': 'cross-site',
-                'upgrade-insecure-requests': '1',
-            },
-            'ping|activate': {
-                'accept': '*/*',
-                'accept-language': 'en-US,en;q=0.9',
-                'cache-control': 'no-cache',
-                'origin': 'https://iframe.mediadelivery.net',
-                'pragma': 'no-cache',
-                'referer': 'https://iframe.mediadelivery.net/',
-                'sec-fetch-dest': 'empty',
-                'sec-fetch-mode': 'cors',
-                'sec-fetch-site': 'same-site',
-            },
-            'playlist': {
-                'authority': 'iframe.mediadelivery.net',
-                'accept': '*/*',
-                'accept-language': 'en-US,en;q=0.9',
-                'cache-control': 'no-cache',
-                'pragma': 'no-cache',
-                'referer': embed_url,
-                'sec-fetch-dest': 'empty',
-                'sec-fetch-mode': 'cors',
-                'sec-fetch-site': 'same-origin',
-            }
-        }
-        embed_response = self.session.get(embed_url,
-                                          headers=self.headers['embed'])
-        embed_page = embed_response.text
-        try:
-            self.server_id = re.search(
-                r'https://video-(.*?)\.mediadelivery\.net', embed_page).group(1)
-        except AttributeError:
-            sys.exit(1)
-        self.headers['ping|activate'].update(
-            {'authority': f'video-{self.server_id}.mediadelivery.net'})
-        search = re.search(r'contextId=(.*?)&secret=(.*?)"', embed_page)
-        self.context_id, self.secret = search.group(1), search.group(2)
-        if name:
-            self.file_name = f'{name}.mp4'
-        else:
-            file_name_unescaped = re.search(r'og:title" content="(.*?)"',
-                                            embed_page).group(1)
-            file_name_escaped = unescape(file_name_unescaped)
-            self.file_name = re.sub(r'\.[^.]*$.*', '.mp4', file_name_escaped)
-        self.path = path if path else '~/Videos/Bunny CDN/'
+pingHeaders = {
+    'Origin': 'https://iframe.mediadelivery.net',
+    'Referer': 'https://iframe.mediadelivery.net/',
+    'Sec-Fetch-Site': 'same-site'
+}
 
-    def prepare_dl(self) -> str:
+mid_idx = player.find('/.drm')
+start_idx = player.rfind('"', 0, mid_idx) + 1
+end_idx = player.find('/ping', mid_idx)
+mediadelivery = player[start_idx:end_idx]
 
-        def ping(time: int, paused: str, res: str):
-            md5_hash = md5(
-                f'{self.secret}_{self.context_id}_{time}_{paused}_{res}'.encode(
-                    'utf8')).hexdigest()
-            params = {
-                'hash': md5_hash,
-                'time': time,
-                'paused': paused,
-                'chosen_res': res
-            }
-            self.session.get(
-                f'https://video-{self.server_id}.mediadelivery.net/.drm/{self.context_id}/ping',
-                params=params,
-                headers=self.headers['ping|activate'])
+#Hash value doesn't matter
+ping = mediadelivery + '/ping?hash=13892ac0903f805449a8dcbe781f896e&time=300&paused=false&resolution=720'
 
-        def activate():
-            self.session.get(
-                f'https://video-{self.server_id}.mediadelivery.net/.drm/{self.context_id}/activate',
-                headers=self.headers['ping|activate'])
+###ping and activate is needed to download full video
+client.get(ping, headers=pingHeaders)
+###
 
-        def main_playlist():
-            params = {'contextId': self.context_id, 'secret': self.secret}
-            response = self.session.get(
-                f'https://iframe.mediadelivery.net/{self.guid}/playlist.drm',
-                params=params,
-                headers=self.headers['playlist'])
-            resolutions = re.findall(r'RESOLUTION=(.*)', response.text)[::-1]
-            if not resolutions:
-                sys.exit(2)
-            else:
-                return resolutions[0]  # highest resolution, -1 for lowest
+activate = mediadelivery + '/activate'
 
-        def video_playlist():
-            params = {'contextId': self.context_id}
-            self.session.get(
-                f'https://iframe.mediadelivery.net/{self.guid}/{resolution}/video.drm',
-                params=params,
-                headers=self.headers['playlist'])
+###
+client.get(activate, headers=pingHeaders)
+###
+######################################################################################################
+playlistHeaders = {
+    'Referer': URI,
+    'Sec-Fetch-Site': 'same-origin'
+}
 
-        ping(time=0, paused='true', res='0')
-        activate()
-        resolution = main_playlist()
-        video_playlist()
-        for i in range(0, 29, 4):  # first 28 seconds, arbitrary
-            ping(time=i + round(random(), 6),
-                 paused='false',
-                 res=resolution.split('x')[-1])
-        self.session.close()
-        return resolution
+mid_idx = player.find('playlist.drm')
+start_idx = player.rfind('"', 0, mid_idx) + 1
+end_idx = player.find('"', mid_idx)
+playlistURI = player[start_idx:end_idx]
 
-    def download(self):
-        resolution = self.prepare_dl()
-        url = [
-            f'https://iframe.mediadelivery.net/{self.guid}/{resolution}/video.drm?contextId={self.context_id}'
-        ]
-        ydl_opts = {
-            'http_headers': {
-                'Referer': self.embed_url,
-                'User-Agent': self.user_agent['user-agent']
-            },
-            'concurrent_fragment_downloads': 10,
-            # 'external_downloader': 'aria2c'
-            'nocheckcertificate': True,
-            'outtmpl': self.file_name,
-            'restrictfilenames': True,
-            'windowsfilenames': True,
-            'nopart': True,
-            'paths': {
-                'home': self.path,
-                'temp': f'.{self.file_name}/',
-            },
-            'retries': float('inf'),
-            'extractor_retries': float('inf'),
-            'fragment_retries': float('inf'),
-            'skip_unavailable_fragments': False,
-            'no_warnings': True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download(url)
+###
+playlist = client.get(playlistURI, headers=playlistHeaders).text
+###
+
+resolution = playlist.split('\n')[-1]
+tsListURI = playlistURI[:playlistURI.find('playlist')] + (resolution if resolution != '' else playlist.split('\n')[-2])
+
+###
+tsList = client.get(tsListURI, headers=playlistHeaders).text #video.drm
+###
+######################################################################################################
+client.headers['Origin'] = 'https://iframe.mediadelivery.net'
+client.headers['Referer'] = 'https://iframe.mediadelivery.net/'
+sameSiteHeader = {
+    'Sec-Fetch-Site': 'same-site'
+}
+crossSiteHeader = {
+    'Sec-Fetch-Site': 'cross-site'
+}
+
+print('Done\nDownloading ts file...', end='')
+
+tsCNT = 0
+pingCNT = 0
+start_idx = tsList.rfind('video') + 5
+end_idx = tsList.find('.', start_idx)
+totalTs = int(tsList[start_idx:end_idx]) #Total number of ts files. (last ts file number)
+
+tsFile = f'./{title}.ts'
+with open(tsFile, 'wb') as file:
+    for uri in tsList.split('\n'):
+        if uri[:10] == '#EXT-X-KEY':
+            start_idx = uri.find('URI="') + 5
+            end_idx = uri.find('"', start_idx)
+            keyURI = uri[start_idx:end_idx]
+
+            ###to get a key
+            key = client.get(keyURI, headers=sameSiteHeader).content
+            ###
+
+            start_idx = uri.find('IV=0x') + 5
+            iv = bytes.fromhex(uri[start_idx:])
+
+        elif uri[:5] == 'https':
+            ###to get a encrypted ts file
+            encryptedTs = client.get(uri, headers=crossSiteHeader).content
+            ###
+
+            cipher = AES.new(key, AES.MODE_CBC, iv)
+            decryptedTs = unpad(cipher.decrypt(encryptedTs), AES.block_size)
+
+            file.write(decryptedTs)
+
+            #Show progress
+            print('\rDownloading ts file... ' + str(round(tsCNT / totalTs * 100, 2)) + '%  ', end='')
+            tsCNT += 1
+            pingCNT += 1
+        
+        if pingCNT == 10:
+            ###Ping is required periodically
+            client.get(ping, headers=sameSiteHeader)
+            ###
+            pingCNT = 0
+
+######################################################################################################
+#convert ts to mp4 and remove ts file.
+print('\nAlmost done!\nConverting ts to mp4...')
+mp4File = f'./{title}.mp4'
+command = ['ffmpeg', '-i', tsFile, '-c', 'copy', '-bsf:a', 'aac_adtstoasc', mp4File]
+subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+command = ['rm', tsFile]
+subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+print('Complete!')
